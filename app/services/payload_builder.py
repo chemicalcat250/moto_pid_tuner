@@ -13,6 +13,10 @@ class PayloadBuilder:
     TYPE_ADVANCED = 0x03  # 高级算法参数 (前馈/滤波)
     TYPE_STATUS = 0x04  # 状态查询类 (位置/电流反馈)
     TYPE_SYSTEM = 0xFF  # 系统指令 (重启/急停)
+    TYPE_MOVE_POS = 0x11 #电机位置移动
+    TYPE_UPDATE_PID = 0x22 #修改PID参数
+    TYPE_QUERY_POS = 0x31
+
 
     @staticmethod
     def _build_base(motor_id: int, is_write: bool, type_code: int, data_floats: list) -> bytes:
@@ -72,3 +76,32 @@ class PayloadBuilder:
         f2 = 1.0 if reset else 0.0
         f3 = 1.0 if set_zero else 0.0
         return cls._build_base(motor_id, True, cls.TYPE_SYSTEM, [f1, f2, f3, 0, 0, 0])
+
+    @classmethod
+    def move_position(cls, motor_id: int, position: float) -> bytes:
+        """
+        [0x11] 电机位置移动指令
+        """
+        # B:Ctrl, B:Type, f:Pos, 20x:填充, 3x:预留
+        ctrl = 0x80 | (motor_id & 0x7F)
+        return struct.pack("<BB f 20x 3x", ctrl, cls.TYPE_MOVE_POS, position)
+
+    @classmethod
+    def update_pid(cls, motor_id: int, p: float, i: float, d: float) -> bytes:
+        """
+        [0x22] PID 参数修改指令
+        """
+        # B:Ctrl, B:Type, 3f:P/I/D, 12x:填充, 3x:预留
+        ctrl = 0x80 | (motor_id & 0x7F)
+        return struct.pack("<BB 3f 12x 3x", ctrl, cls.TYPE_UPDATE_PID, p, i, d)
+
+    @classmethod
+    def query_position(cls, motor_id: int) -> bytes:
+        """
+        [0x31] 请求查询电机当前位置 (读操作)
+        """
+        # 注意：这里 is_write 为 False，所以 Ctrl 最高位为 0
+        ctrl = 0x00 | (motor_id & 0x7F)
+
+        # B:Ctrl, B:Type, 24x:数据区全补零, 3x:预留区补零
+        return struct.pack("<BB 24x 3x", ctrl, cls.TYPE_QUERY_POS)
