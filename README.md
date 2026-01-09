@@ -1,0 +1,2 @@
+# moto_pid_tuner
+这是一个基于Python的使用UDP来与ESP32S3通讯，实时监控其上电机状态并修改电机参数的应用
