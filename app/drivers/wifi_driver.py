@@ -19,25 +19,15 @@ class WifiCommunicator(ICommunicator):
         self.FRAME_SIZE = 32
 
     def connect(self) -> bool:
-        """
-        初始化 UDP Socket。
-        注意：UDP 是无连接的，这里的 connect 主要是准备套接字资源。
-        """
         try:
-            # 创建 UDP 套接字 (AF_INET 为 IPv4, SOCK_DGRAM 为 UDP)
             self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-            # 设置超时，防止 receive 永远阻塞
-            self._sock.settimeout(self._timeout)
-
-            # 可以在这里尝试发送一个“心跳/握手”包来确认 ESP32 是否在线
-            # 目前先简单标记为已连接
+            # 核心优化：设置为非阻塞模式
+            self._sock.setblocking(False)
             self._connected = True
-            print(f"[WiFi] 已准备好通讯，目标地址: {self._target_addr}")
+            print(f"[WiFi] 非阻塞模式已就绪")
             return True
         except Exception as e:
-            print(f"[WiFi] 连接初始化失败: {e}")
-            self._connected = False
+            print(f"[WiFi] 初始化失败: {e}")
             return False
 
     def disconnect(self):
@@ -62,25 +52,16 @@ class WifiCommunicator(ICommunicator):
             return False
 
     def receive(self) -> bytes:
-        """
-        接收 32 字节定长响应。
-        如果超时或出错，返回空字节。
-        """
         if not self._connected or not self._sock:
             return b""
-
         try:
-            # 这里的缓冲区大小设为 1024，但我们只取前 32 字节或验证长度
+            # 非阻塞模式下，如果没有数据会立即抛出 BlockingIOError
             data, addr = self._sock.recvfrom(1024)
-
             if len(data) == self.FRAME_SIZE:
                 return data
-            else:
-                # 记录异常长度包，或者直接丢弃处理
-                # print(f"[WiFi] 收到异常长度数据: {len(data)}")
-                return b""
-        except socket.timeout:
-            # 正常现象，表示当前没有数据回传
+            return b""
+        except (BlockingIOError, socket.error):
+            # 捕获异常表示当前缓冲区无数据，立即返回
             return b""
         except Exception as e:
             print(f"[WiFi] 接收异常: {e}")
