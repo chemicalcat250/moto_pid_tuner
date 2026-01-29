@@ -1,74 +1,72 @@
 import struct
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Callable
 
 class DataProcessor:
     """
-    数据处理器：负责将 29 字节的业务载荷解析为结构化数据。
+    数据处理器：负责将 29 字节业务载荷解析为结构化数据 。
+    采用注册制设计，方便后期动态扩展新指令。
+    结构：Ctrl(1B) + Type(1B) + Data(24B) + Reserved(3B) [cite: 280, 293]。
     """
 
-    # 对应协议中的 Type 定义
-    TYPE_PID = 0x01
-    TYPE_MOTION = 0x02
-    TYPE_ADVANCED = 0x03
-    TYPE_STATUS = 0x04
-    TYPE_SYSTEM = 0xFF
+    def __init__(self):
+        # 定义解析函数注册表，Key 为功能码 (Type)
+        self._parsers: Dict[int, Callable[[bytes, dict], None]] = {
+            0x01: self._parse_pid,    # PID 参数类 [cite: 283]
+            0x04: self._parse_status, # 状态反馈类 [cite: 285]
+            0x31: self._parse_status, # 兼容位置查询响应 [cite: 293]
+        }
 
     def process(self, body: bytes) -> Optional[Dict[str, Any]]:
-        """
-        统一入口方法：解析 29 字节的 Body 载荷
-        结构：Ctrl(1B) + Type(1B) + Data(24B) + Reserved(3B)
-        """
+        """统一入口：解析 29 字节 Body 载荷 """
         if len(body) != 29:
-            print(f"[Processor] 长度错误: 期望 29, 实际 {len(body)}")
+            print(f"[Processor] 长度错误: 期望 29, 实际 {len(body)} [cite: 281]")
             return None
 
         try:
-            # 1. 提取基本信息
+            # 1. 提取控制信息 [cite: 281]
             # B=uint8, 24s=24字节原始数据
             ctrl, msg_type = struct.unpack("<BB", body[:2])
-            data_part = body[2:26]
-
-            motor_id = ctrl & 0x7F
-            is_write = bool(ctrl & 0x80)
+            data_part = body[2:26] # 提取 24 字节数据区 [cite: 282]
 
             result = {
-                "motor_id": motor_id,
+                "motor_id": ctrl & 0x7F,     # Bit 0-6 为 ID [cite: 282]
+                "is_response": not bool(ctrl & 0x80), # Bit 7 为读写位 [cite: 282]
                 "type": msg_type,
-                "is_response": not is_write,
                 "data": {}
             }
 
-            # 2. 根据 Type 进行解析
-            if msg_type == DataProcessor.TYPE_PID:
-                # 解析 PID 常用参数 (6个float)
-                p, i, d, i_lim, out_lim, deadzone = struct.unpack("<6f", data_part)
-                result["data"] = {
-                    "p": p, "i": i, "d": d,
-                    "i_limit": i_lim, "out_limit": out_lim, "deadzone": deadzone
-                }
-                # 打印解析结果用于调试
-                print(f"[Processor] 解析到 PID -> ID:{motor_id} P:{p} I:{i}")
-
-            elif msg_type == DataProcessor.TYPE_STATUS or msg_type == 0x01:
-                # 这里兼容你从机测试程序里的 0x01
-                # 解析状态信息 (6个float)
-                pos, vel, cur, volt, err_code, state = struct.unpack("<6f", data_part)
-                result["data"] = {
-                    "position": pos,
-                    "velocity": vel,
-                    "current": cur,
-                    "voltage": volt,
-                    "error": int(err_code),
-                    "state": int(state)
-                }
-                print(f"[Processor] 解析到状态 -> ID:{motor_id} Pos:{pos:.2f} Vel:{vel:.2f}")
-
+            # 2. 根据功能码分发解析逻辑
+            parser_func = self._parsers.get(msg_type)
+            if parser_func:
+                parser_func(data_part, result["data"])
             else:
-                # 默认打印原始十六进制，便于分析未定义类型
-                print(f"[Processor] 收到未知类型 {hex(msg_type)} | Raw: {body.hex(' ')}")
+                # 默认打印原始十六进制便于分析未知类型 [cite: 288]
+                result["data"]["raw_hex"] = data_part.hex(' ')
 
             return result
 
         except Exception as e:
-            print(f"[Processor] 解析出错: {e}")
+            print(f"[Processor] 解析异常: {e}")
             return None
+
+    # --- 具体的业务解析函数 ---
+
+    def _parse_pid(self, data: bytes, out: dict):
+        """解析 PID 常用参数 (6个 float) [cite: 284]"""
+        p, i, d, i_lim, out_lim, deadzone = struct.unpack("<6f", data)
+        out.update({
+            "p": p, "i": i, "d": d,
+            "i_limit": i_lim, "out_limit": out_lim, "deadzone": deadzone
+        })
+
+    def _parse_status(self, data: bytes, out: dict):
+        """解析电机状态反馈 (6个 float) [cite: 286]"""
+        pos, vel, cur, volt, err, state = struct.unpack("<6f", data)
+        out.update({
+            "position": pos,
+            "velocity": vel,
+            "current": cur,
+            "voltage": volt,
+            "error": int(err),
+            "state": int(state)
+        })

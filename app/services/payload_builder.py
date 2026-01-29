@@ -1,3 +1,4 @@
+# app/services/payload_builder.py
 import struct
 
 
@@ -7,101 +8,58 @@ class PayloadBuilder:
     结构：Ctrl(1B) + Type(1B) + Data(24B) + Reserved(3B) = 29 Bytes
     """
 
-    # 定义功能类型常量 (Type)
-    TYPE_PID = 0x01  # PID 参数类
-    TYPE_MOTION = 0x02  # 运动控制类 (目标位置/速度)
-    TYPE_ADVANCED = 0x03  # 高级算法参数 (前馈/滤波)
-    TYPE_STATUS = 0x04  # 状态查询类 (位置/电流反馈)
-    TYPE_SYSTEM = 0xFF  # 系统指令 (重启/急停)
-    TYPE_MOVE_POS = 0x11 #电机位置移动
-    TYPE_UPDATE_PID = 0x22 #修改PID参数
-    TYPE_QUERY_POS = 0x31
+    # --- 指令功能码定义 (根据 image_d6c518.png) ---
+    CMD_MOTOR_MOVE = 0x11  # 电机开始转动
+    CMD_MOTOR_STOP = 0x12  # 电机停止转动
+    CMD_MOTOR_DIR = 0x13  # 方向改变 (0:反转, 1:正转)
+    CMD_MOTOR_SPEED = 0x14  # 速度改变
 
+    CMD_SET_POS = 0x21  # 设定目标角度
+    CMD_SET_PID = 0x22  # 设定 PID 参数
+
+    CMD_CTRL_MODE = 0x31  # 控制模式转换 (0:开环, 1:闭环)
 
     @staticmethod
     def _build_base(motor_id: int, is_write: bool, type_code: int, data_floats: list) -> bytes:
-        """
-        内部通用构建方法
-        """
-        # 1. 构造 Ctrl (Bit 7: Read/Write, Bit 0-6: ID)
+        """通用构建方法：打包为 B + B + 6f + 3x"""
         ctrl = (0x80 if is_write else 0x00) | (motor_id & 0x7F)
-
-        # 2. 补齐 6 个 float (24字节)
         if len(data_floats) < 6:
             data_floats += [0.0] * (6 - len(data_floats))
-
-        # 3. 打包: B(Ctrl) + B(Type) + 6f(Data) + 3x(Reserved)
-        # 使用 < 表示小端字节序
         return struct.pack("<BB6f3x", ctrl, type_code, *data_floats[:6])
 
     # --- 具体的业务调用方法 ---
 
     @classmethod
-    def set_pid(cls, motor_id: int, p: float, i: float, d: float,
-                i_limit: float = 100.0, out_limit: float = 100.0, deadzone: float = 0.0) -> bytes:
-        """
-        生成修改 PID 参数的载荷 (写操作)
-        """
-        return cls._build_base(motor_id, True, cls.TYPE_PID, [p, i, d, i_limit, out_limit, deadzone])
+    def motor_move(cls, motor_id: int):
+        """0x11: 电机开始转动"""
+        return cls._build_base(motor_id, True, cls.CMD_MOTOR_MOVE, [])
 
     @classmethod
-    def set_target(cls, motor_id: int, pos: float, vel: float = 0.0, acc: float = 0.0) -> bytes:
-        """
-        生成设定运动目标的载荷 (写操作)
-        """
-        return cls._build_base(motor_id, True, cls.TYPE_MOTION, [pos, vel, acc, 0, 0, 0])
+    def motor_stop(cls, motor_id: int):
+        """0x12: 电机停止转动"""
+        return cls._build_base(motor_id, True, cls.CMD_MOTOR_STOP, [])
 
     @classmethod
-    def query_pid(cls, motor_id: int) -> bytes:
-        """
-        生成查询当前 PID 参数的载荷 (读操作)
-        """
-        # 读操作时，Data 区通常填充 0
-        return cls._build_base(motor_id, False, cls.TYPE_PID, [0] * 6)
+    def motor_dir(cls, motor_id: int, direction: int):
+        """0x13: 方向改变 (0:反转, 1:正转)"""
+        return cls._build_base(motor_id, True, cls.CMD_MOTOR_DIR, [float(direction)])
 
     @classmethod
-    def query_status(cls, motor_id: int) -> bytes:
-        """
-        生成查询电机实时状态(位置/电流/速度)的载荷 (读操作)
-        """
-        return cls._build_base(motor_id, False, cls.TYPE_STATUS, [0] * 6)
+    def motor_speed(cls, motor_id: int, speed: int):
+        """0x14: 速度改变"""
+        return cls._build_base(motor_id, True, cls.CMD_MOTOR_SPEED, [float(speed)])
 
     @classmethod
-    def system_control(cls, motor_id: int, stop: bool = False, reset: bool = False, set_zero: bool = False) -> bytes:
-        """
-        系统级控制
-        """
-        # 这里用 float 的位来模拟标志位，或者直接定义协议
-        f1 = 1.0 if stop else 0.0
-        f2 = 1.0 if reset else 0.0
-        f3 = 1.0 if set_zero else 0.0
-        return cls._build_base(motor_id, True, cls.TYPE_SYSTEM, [f1, f2, f3, 0, 0, 0])
+    def set_pos(cls, motor_id: int, target_angle: float):
+        """0x21: 设定角度目标值"""
+        return cls._build_base(motor_id, True, cls.CMD_SET_POS, [target_angle])
 
     @classmethod
-    def move_position(cls, motor_id: int, position: float) -> bytes:
-        """
-        [0x11] 电机位置移动指令
-        """
-        # B:Ctrl, B:Type, f:Pos, 20x:填充, 3x:预留
-        ctrl = 0x80 | (motor_id & 0x7F)
-        return struct.pack("<BB f 20x 3x", ctrl, cls.TYPE_MOVE_POS, position)
+    def set_pid(cls, motor_id: int, p: float, i: float, d: float):
+        """0x22: 设定 PID 参数"""
+        return cls._build_base(motor_id, True, cls.CMD_SET_PID, [p, i, d])
 
     @classmethod
-    def update_pid(cls, motor_id: int, p: float, i: float, d: float) -> bytes:
-        """
-        [0x22] PID 参数修改指令
-        """
-        # B:Ctrl, B:Type, 3f:P/I/D, 12x:填充, 3x:预留
-        ctrl = 0x80 | (motor_id & 0x7F)
-        return struct.pack("<BB 3f 12x 3x", ctrl, cls.TYPE_UPDATE_PID, p, i, d)
-
-    @classmethod
-    def query_position(cls, motor_id: int) -> bytes:
-        """
-        [0x31] 请求查询电机当前位置 (读操作)
-        """
-        # 注意：这里 is_write 为 False，所以 Ctrl 最高位为 0
-        ctrl = 0x00 | (motor_id & 0x7F)
-
-        # B:Ctrl, B:Type, 24x:数据区全补零, 3x:预留区补零
-        return struct.pack("<BB 24x 3x", ctrl, cls.TYPE_QUERY_POS)
+    def ctrl_mode(cls, motor_id: int, mode: int):
+        """0x31: 控制模式转换 (0:开环, 1:闭环)"""
+        return cls._build_base(motor_id, True, cls.CMD_CTRL_MODE, [float(mode)])
