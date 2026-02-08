@@ -29,7 +29,7 @@ app\services\__init__.py
 
 ### File: main.qt.py
 ```python
-# main.qt.py (重构后 - 统一 PySide6)
+# main.qt.py (重构后 - 统113311一 PySide6)
 import sys
 import os
 # 关键修改：从 PySide6 导入 QApplication
