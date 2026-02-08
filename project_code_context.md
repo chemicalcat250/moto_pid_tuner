@@ -35,7 +35,7 @@ import os
 # 关键修改：从 PySide6 导入 QApplication
 from PySide6.QtWidgets import QApplication
 
-# 确保路径正确，以便导入 app 包
+# 确保路径正确，以便导入 app 包1
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), ".")))
 
 from app.gui.main_window import MainWindow
