@@ -11,6 +11,8 @@ env/
 venv/
 ENV/
 
+build/
+dist/
 # OS metadata
 .DS_Store
 Thumbs.db# Byte-compiled / optimized / DLL files
